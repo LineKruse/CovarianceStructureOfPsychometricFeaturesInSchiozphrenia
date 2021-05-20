@@ -1,0 +1,564 @@
+---
+title: "MA_thesis_analysis"
+output: html_document
+author: Line Kruse 
+---
+
+```{r setup, include=FALSE}
+library(pacman)
+p_load(psychonetrics, dplyr, qgraph, ggplot2, bootnet, Rmpfr, semPlot, GGally, corpcor, lvnet, BGGM, pracma, semPlot, matrixcalc, mctest, factoextra, readxl)
+```
+
+#Import data 
+
+```{r}
+#SIPS symptoms 
+clinical <- read.delim("/path/PNC_clinical_data_cleaned.txt", sep=" ",header=TRUE)
+
+#Cognitive tasks
+cognitive <- read.delim("/path/PNC_cognitive_data_cleaned.txt", sep=" ",header=TRUE)
+
+#Genetic cluster weights derived from NBS analysis 
+cluster_weights <- read.delim("/path/cluster_weights.txt", sep=" ",header=TRUE)
+
+#Demographics
+demo <- read.delim("/path/clin_info_n6481.txt", sep=",",header=TRUE)
+
+demo2 <- read_excel("/path/fullSample_behavioral-tapfixDA.xlsx")
+
+```
+
+#Clean and combine datasets 
+
+```{r}
+#Rename ID column in cluster df 
+cluster_weights <- rename(cluster_weights, SUBJID="ID")
+
+#Merge dataframes 
+data <- merge(clinical,cognitive, by="SUBJID")
+data <- merge(data, cluster_weights, by="SUBJID")
+```
+
+#Demographics and basic statistics 
+
+```{r}
+#Get demographics stats - Age and Sex
+demo <- demo[,c(2:4)]
+demo_df <- merge(data, demo, by="SUBJID")
+summary(demo_df$age_at_cnb)
+sd(demo_df$age_at_cnb)
+min(demo_df$age_at_cnb)  
+max(demo_df$age_at_cnb) 
+table(demo_df$Sex) 
+
+#Get demographics - Race 
+demo2 <- demo2[,c(1:3)]
+IDs <- data[,c(1,2)]
+demo2 <- merge(demo2, IDs, by="SUBJID")
+summary(demo2$Race)
+
+#Check number of subjects in each cluster (based on highest value)
+cluster_subset <- data_remNA[,c(20:22)]
+x <- colnames(cluster_subset)[apply(cluster_subset, 1, which.max)]
+summary(x)
+
+#Calculate mean and sd for "weights" in each cluster (do before sclaing)
+colMeans(cluster_subset) 
+apply(cluster_subset, 2, sd)
+
+#Mean symptom scores  
+SIP_sum <- rowSums(data[,c(2:8)])
+data$SIP_sum <- SIP_sum
+summary(data$SIP_sum)
+sd(data$SIP_sum, na.rm = T)
+
+#Mean WRAT scores 
+summary(data$WRAT)
+sd(data$WRAT)
+
+#Split male/female
+female <- demo_df[demo_df$Sex=="F",]
+male <- demo_df[demo_df$Sex=="M",]
+
+summary(female$age_at_cnb)
+sd(female$age_at_cnb)
+
+summary(male$age_at_cnb)
+sd(male$age_at_cnb)
+
+summary(female$SIP_sum)
+sd(female$SIP_sum, na.rm = T)
+
+summary(male$SIP_sum)
+sd(male$SIP_sum, na.rm=T)
+
+summary(female$WRAT)
+sd(female$WRAT)
+
+summary(male$WRAT)
+sd(male$WRAT)
+```
+
+#Rename variables, log-transform and scale 
+
+```{r}
+#Remove ID column 
+data <- data[,-1]
+
+#Rename vars 
+data <- data %>%
+  rename(Attentional_Deficits="SIP001",
+         Disorganized_Speech="SIP030",
+         PerceptionSelfOthersWorld="SIP035",
+         Emotional_Expression="SIP037",
+         Occupational_Functioning="SIP041",
+         Avolition="SIP043",
+         Psychosis="PSY",
+         Social_Cognition="PADT",
+         Facial_Memory="FMT",
+         Emotion_Recognition="PEIT",
+         Verbal_Memory="PWMT",
+         Verbal_Reasoning="PVRT",
+         Motor_Planning="PMT",
+         Abstraction="PMRT",
+         Motor_Speed="FT1",
+         Visuospatial="VOLT",
+         Working_Memory="NBACK",
+         Attention="PCPTCR",
+         Academic_Skills="WRAT")
+
+#Remove NAs 
+data_remNA <- na.omit(data)
+
+#Log transform right skewed data 
+data_remNA$sub1 <- log(data_remNA$sub1)
+data_remNA$sub2 <- log(data_remNA$sub2)
+data_remNA$sub3 <- log(data_remNA$sub3)
+
+#Scale 
+data_SIP <- scale(data_remNA)
+```
+
+#Principal Component Analysis (PCA)
+
+```{r}
+#Perform pca using spectral decomposition 
+pca_sd <- princomp(data_SIP, cor=T, scores=T)
+summary(pca_sd) 
+
+#Inspect components
+res_var <- get_pca_var(pca_sd)
+res_var$contrib 
+res_var$cos2 
+
+#Inspect eigenvalues
+eig <- get_eigenvalue(pca_sd)
+
+#Inspect variance
+summary(pca_sd)
+
+#Plot principal components (scree plot)
+pdf(file="/path/PCA_screePlot.pdf", width=5, height=3)
+fviz_eig(pca_sd)
+dev.off()
+
+plot(pca_sd)
+```
+
+#Exploratory Factor Analysis (EFA)
+##With 2, 3, 4 and 5 factors 
+
+```{r}
+#Model estimation 
+efa_2f <- factanal(data_SIP, factors=2, rotation="promax",scores="regression")
+efa_2f_loadings <- loadings(efa_2f)
+
+efa_3f <- factanal(data_SIP, factors=3, rotation="promax",scores="regression")
+efa_3f_loadings <- loadings(efa_3f)
+
+efa_4f <- factanal(data_SIP, factors=4, rotation="promax",scores="regression")
+efa_4f_loadings <- loadings(efa_4f)
+
+efa_5f <- factanal(data_SIP, factors=5, rotation="promax",scores="regression")
+efa_5f_loadings <- loadings(efa_5f)
+
+#Inspect factor loadings 
+pdf(file="/path/EFA_2f_loadings.pdf")
+qgraph.loadings(efa_2f_loadings, rotation="promax",minimum=0.2,cut=0.4,vsize=c(5,15),borders=T, labels=c(1:22), layout="tree2", title="EFA: Two-factor model loadings")
+dev.off()
+
+pdf(file="/path/EFA_3f_loadings.pdf")
+qgraph.loadings(efa_3f_loadings, rotation="promax",minimum=0.2,cut=0.4,vsize=c(5,15),borders=T,labels=c(1:22), layout="tree2", title="EFA: Three-factor model loadings")
+dev.off()
+
+pdf(file="/path/EFA_4f_loadings.pdf")
+qgraph.loadings(efa_4f_loadings, rotation="promax",minimum=0.2,cut=0.4,vsize=c(5,15),borders=T,labels=c(1:20), layout="tree2", title="EFA: Four-factor model loadings")
+dev.off()
+
+pdf(file="/path/EFA_5f_loadings.pdf")
+qgraph.loadings(efa_5f_loadings, rotation="promax",minimum=0.2,cut=0.4,vsize=c(5,15),borders=T,labels=c(1:20), layout="tree2", title="EFA: Five-factor model loadings")
+dev.off()
+
+```
+
+#Create factor loading matrices based on EFA results
+
+```{r}
+lambda_2f <- matrix(0,22,2)
+lambda_2f[c(3,18,20,21),1] <- 1
+lambda_2f[c(14,18,20:22),2] <- 1
+
+lambda_3f <- matrix(0,22,3)
+lambda_3f[c(1,8:19),1] <- 1
+lambda_3f[c(3,20,21),2] <- 1
+lambda_3f[c(20:22),3] <- 1
+
+lambda_4f <- matrix(0,22,4)
+lambda_4f[c(1,8:19),1] <- 1
+lambda_4f[c(1:7),2] <- 1
+lambda_4f[c(20,21),3] <- 1
+lambda_4f[c(20:22),4] <- 1
+
+lambda_5f <- matrix(0,22,5)
+lambda_5f[c(8:10,12:19),1] <- 1
+lambda_5f[c(1:7),2] <- 1
+lambda_5f[c(20,21),3] <- 1
+lambda_5f[c(8,9,11:14,16:19),4] <- 1
+lambda_5f[c(20:22),5] <- 1
+```
+
+#Confirmatory Factor Model (CFA)
+##Compare fit of the five factor structures derived from EFA 
+
+```{r}
+obsvars <- colnames(data_SIP)
+
+#cfa_1f <- lvm(data_SIP, lambda=lambda_1f, vars=obsvars, identification = "variance", latents=1)%>%runmodel
+
+cfa_2f <- lvm(data_SIP, lambda=lambda_2f, vars=obsvars, identification = "variance", latents=c(1,2))%>%runmodel
+
+cfa_3f <- lvm(data_SIP, lambda=lambda_3f, vars=obsvars, identification = "variance", latents=c(1:3))%>%runmodel
+
+cfa_4f <- lvm(data_SIP, lambda=lambda_4f, vars=obsvars, identification = "variance", latents=c(1:4))%>%runmodel
+
+cfa_5f <- lvm(data_SIP, lambda=lambda_5f, vars=obsvars, identification = "variance", latents=c(1:5))%>%runmodel
+
+#Compare fit of the five models - see which one to use in comparison with GGM, LNM and RNM
+compare(cfa_2f, cfa_3f, cfa_4f, cfa_5f)
+
+#Posterior model probabilities 
+comparison_CFA <- compare(Two_factor=cfa_2f, Three_factor=cfa_3f, Four_factor = cfa_4f, Five_factor=cfa_5f)
+
+BICs_cfa <- mpfr(comparison_CFA$BIC, 100)
+BICtrans_cfa <- exp(-0.5 * BICs_cfa) 
+sumBICtrans_cfa <- sum(BICtrans_cfa) 
+comparison_CFA$modelProbability <- as.numeric(BICtrans_cfa / sumBICtrans_cfa)
+
+pdf(file="/path/CFA_model_comparison_posterior_probability_plot.pdf")
+ggplot(comparison_CFA, aes(x=model, y=modelProbability))+
+  geom_bar(stat="identity")+
+  xlab("")+
+  ylab("Posterior model probability, one-factor")+
+  theme_bw()+
+  labs(title="CFA posterior model probabilities")+
+  ylim(0,1)
+dev.off()
+
+```
+
+#Define three-factor loading structure (theory based)
+
+```{r}
+#Define factor structure 
+lambda_3f_theory <- matrix(0,22,3)
+lambda_3f_theory[c(1:7),1] <- 1 #Clinical 
+lambda_3f_theory[c(8:19),2] <- 1 #Cognitive 
+lambda_3f_theory[c(20:22),3] <- 1 #Genetic 
+
+```
+
+#Split data into training and test set 
+
+```{r}
+train_data <- data_SIP[c(TRUE, FALSE),] #Odd cases
+test_data <- data_SIP[c(FALSE, TRUE),] #Even cases 
+```
+
+#Out-of-sample model fit comparison of three- and five-factor CFA 
+
+```{r}
+#Five factor CFA 
+CFA_train_5f <- lvm(train_data, lambda=lambda_5f, vars=obsvars, identification = "variance", latents=c(1:5))%>%runmodel
+
+CFA_lambda_5f <- getmatrix(CFA_train_5f, "lambda")
+CFA_struc_5f <- 1*(CFA_lambda_5f != 0)
+
+CFA_test_5f <- lvm(test_data, lambda=CFA_struc_5f, vars=obsvars, identification = "variance", latents=c(1:5))%>%runmodel
+
+#Three factor CFA 
+CFA_train_3f <- lvm(train_data, lambda=lambda_3f_theory, vars=obsvars, identification = "variance", latents=c(1:3))%>%runmodel
+
+CFA_lambda_3f <- getmatrix(CFA_train_3f, "lambda")
+CFA_struc_3f <- 1*(CFA_lambda_3f != 0)
+
+CFA_test_3f <- lvm(test_data, lambda=CFA_struc_3f, vars=obsvars, identification = "variance", latents=c(1:3))%>%runmodel
+
+#Comparison 
+compare(CFA_test_5f, CFA_test_3f)
+```
+
+#Out-of-sample model fit comparison of three- and five-factor LNM 
+
+```{r}
+#Five-factor LNM 
+LNM_train_5f <- lnm(train_data, lambda=lambda_5f, vars=obsvars, identification="variance", latents=c(1:5))%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+LNM_lambda_5f <- getmatrix(LNM_train_5f, "lambda")
+LNM_sigmaZeta_5f <- getmatrix(LNM_train_5f, "sigma_zeta")
+LNM_sigmaEpsilon_5f <- getmatrix(LNM_train_5f, "sigma_epsilon")
+
+struc_lambda_5f <- 1*(LNM_lambda_5f != 0)
+struc_sigmaZeta_5f <- 1*(LNM_sigmaZeta_5f != 0)
+struc_sigmaEpsilon_5f <- 1*(LNM_sigmaEpsilon_5f != 0)
+
+LNM_test_5f <- lnm(test_data, vars=obsvars, identification="variance", lambda=struc_lambda_5f, sigma_zeta=struc_sigmaZeta_5f, sigma_epsilon=struc_sigmaEpsilon_5f, latents=c(1:5))%>%
+  runmodel
+
+#Three-factor LNM 
+LNM_train_3f <- lnm(train_data, lambda=lambda_3f_theory, vars=obsvars, identification="variance", latents=c(1:3))%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+LNM_lambda_3f <- getmatrix(LNM_train_3f, "lambda")
+LNM_sigmaZeta_3f <- getmatrix(LNM_train_3f, "sigma_zeta")
+LNM_sigmaEpsilon_3f <- getmatrix(LNM_train_3f, "sigma_epsilon")
+
+LNM_model <- lnm(data_SIP, lambda=lambda_3f_theory, vars=obsvars, identification="variance", latents=c(1:3))%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+LNM_lambda_3f <- getmatrix(LNM_model, "lambda")
+LNM_sigmaZeta_3f <- getmatrix(LNM_model, "sigma_zeta")
+LNM_sigmaEpsilon_3f <- getmatrix(LNM_model, "sigma_epsilon")
+
+struc_lambda_3f <- 1*(LNM_lambda_3f != 0)
+struc_sigmaZeta_3f <- 1*(LNM_sigmaZeta_3f != 0)
+struc_sigmaEpsilon_3f <- 1*(LNM_sigmaEpsilon_3f != 0)
+
+LNM_test_3f <- lnm(test_data, vars=obsvars, identification="variance", lambda=struc_lambda_3f, sigma_zeta=struc_sigmaZeta_3f, sigma_epsilon=struc_sigmaEpsilon_3f, latents=c(1:3))%>%
+  runmodel
+
+#Comparison 
+compare(LNM_test_5f, LNM_test_3f)
+```
+
+#Out-of-sample model fit comparison of three- and five-factor RNM 
+
+```{r}
+#Five-factor RNM 
+RNM_train_5f <- rnm(train_data, lambda=lambda_5f, vars=obsvars, estimator="FIML")%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+RNM_omegaEpsilon_5f <- getmatrix(RNM_train_5f, "omega_epsilon")
+RNM_omegaEpsilon_5f[is.na(RNM_omegaEpsilon_5f)] <- 0
+RNM_lambda_5f <- getmatrix(RNM_train_5f, "lambda")
+
+RNM_struc_omegaEpsilon_5f <- 1*(RNM_omegaEpsilon_5f != 0)
+RNM_struc_lambda_5f <- 1*(RNM_lambda_5f != 0)
+
+RNM_test_5f <- rnm(test_data, lambda=RNM_struc_lambda_5f, omega_epsilon=RNM_struc_omegaEpsilon_5f, vars=obsvars, estimator="FIML")%>%
+  runmodel
+##### Test model not converging #####
+
+#Three-factor RNM 
+RNM_train_3f <- rnm(train_data, lambda=lambda_3f_theory, vars=obsvars, estimator="FIML")%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+RNM_train_3f <- rnm(data_SIP, lambda=lambda_3f_theory, vars=obsvars, estimator="FIML")%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion="bic")
+
+RNM_omegaEpsilon_3f <- getmatrix(RNM_train_3f, "omega_epsilon")
+RNM_omegaEpsilon_3f[is.na(RNM_omegaEpsilon_3f)] <- 0
+RNM_lambda_3f <- getmatrix(RNM_train_3f, "lambda")
+
+RNM_struc_omegaEpsilon_3f <- 1*(RNM_omegaEpsilon_3f != 0)
+RNM_struc_lambda_3f <- 1*(RNM_lambda_3f != 0)
+
+RNM_test_3f <- rnm(test_data, lambda=RNM_struc_lambda_3f, omega_epsilon=RNM_struc_omegaEpsilon_3f, vars=obsvars, estimator="FIML")%>%
+  runmodel
+
+RNM_test_3f %>% fit
+```
+
+#Gaussian Graphical Model (GGM)
+##Out-of-sample fit 
+
+```{r}
+GGM_train <- ggm(train_data, vars=obsvars, estimator="FIML")%>%
+  runmodel%>%
+  prune(adjust="fdr", alpha=0.01)%>%
+  modelsearch(verbose=F, criterion = "bic")
+
+GGM_omega <- getmatrix(GGM_train, "omega")
+GGM_struc <- 1*(GGM_omega != 0)
+
+GGM_test <- ggm(test_data, vars=obsvars, estimator="FIML", omega=GGM_struc)%>%
+  runmodel
+
+GGM_test %>% fit
+
+```
+
+#Out-of-sample model fit comparison of best CFA, LNM, RNM and GGM 
+
+```{r}
+comparison_test <- compare(
+  CFA=CFA_test_3f, 
+  GGM=GGM_test, 
+  LNM=LNM_test_3f,
+  RNM=RNM_test_3f)
+
+BICs <- mpfr(comparison_test$BIC, 100)
+BICtrans <- exp(-0.5 * BICs)
+sumBICtrans <- sum(BICtrans)
+comparison_test$modelProbability <- as.numeric(BICtrans / sumBICtrans)
+
+pdf(file="/path/All_models_comparison_posterior_probability.pdf")
+ggplot(comparison_test, aes(x=model, y=modelProbability))+
+  geom_bar(stat="identity")+
+  xlab("")+
+  ylab("Posterior model probability, one-factor")+
+  theme_bw()+
+  ylim(0,1)+
+  labs(title="2-factor models - Out-of-sample comparison", subtitle = "Posterior Model Probability")
+dev.off()
+```
+
+#Graphs 
+
+```{r}
+p_load(colorspace)
+
+groups <- list("Clinical"=c(1:7),"Cognitive"=c(8:19),"Genetic"=c(20:22))
+colors <- hcl.colors(3, palette="Set 2")
+
+#GGM 
+pdf(file="/path/GGM.pdf", width=6, height=3)
+GGM_net <- getmatrix(GGM_model, "omega")
+GGM_graph <- qgraph(GGM_net, theme="colorblind",layout="spring", nodeNames=obsvars,groups=groups,color=colors, legend.cex=0.2)
+dev.off()
+
+#CFA 
+pdf(file="/path/CFA.pdf", width=5, height=3)
+CFA_factorLoadings <- getmatrix(CFA_model_3f_theory, "lambda")
+CFA_graph <- qgraph.loadings(CFA_factorLoadings, theme="colorblind", model="reflective",rotation="promax", vsize=c(5,10), asize=3, layout="tree", groups=groups, nodeNames=obsvars, legend.cex=0.4, color=colors)
+dev.off()
+
+#LNM 
+mod_LNM <- lisrelModel(LY=getmatrix(LNM_model_3f, "lambda"),
+                          PS=getmatrix(LNM_model_3f, "sigma_zeta"),
+                          TE=getmatrix(LNM_model_3f, "sigma_epsilon"),
+                          latNamesEndo = c(1,2,3),
+                          manNamesEndo = obsvars)
+
+omega_LNM <- getmatrix(LNM_model_3f, "omega_zeta")
+
+pdf(file="/path/LNM.pdf", width=5, height=3)
+LNM_graph <- semPaths(mod_LNM,
+                  what="std",
+                  whatLabels="omit", #to make labels represent parameter estimates 
+                  style="lisrel",
+                  residScale=10,
+                  theme="colorblind",
+                  layout="tree2",
+                  #layout="spring",
+                  cardinal="lat cov",
+                  curvePivot=TRUE,
+                  sizeMan=4,
+                  sizeLat=8,
+                  sizeInt=8,
+                  edge.label.cex = 1,
+                  mar=c(6,1,8,1),
+                  reorder=FALSE,
+                  width=8,
+                  height=5,
+                  groups="latents",
+                  pastel=TRUE,
+                  borders=FALSE,
+                  nCharNodes=0,
+                  )
+dev.off()
+
+#RNM 
+net_RNM <- getmatrix(RNM_model_3f, "omega_epsilon")
+facLoadings_RNM <- getmatrix(RNM_model_3f, "lambda")
+facCors_RNM <- getmatrix(RNM_model_3f, "sigma_zeta")
+
+pdf(file="/path/RNM.pdf", width=8, height=3)
+layout(t(1:2))
+RNM_fac_graph <- qgraph.loadings(facLoadings_RNM, theme="colorblind", model="reflective", vsize=c(8,13), asize=5, factorCors=facCors_RNM, groups=groups,color=colors)
+RNM_net_graph <- qgraph(net_RNM, theme="colorblind", layout="spring", nodeNames=obsvars, groups=groups,legend.cex=0.2, vsize=8, groups=groups, color=colors)
+dev.off()
+```
+
+#Network topology indices 
+
+```{r}
+#RNM centrality 
+centrality_RNM <- centrality_auto(net_RNM)
+centrality_RNM_df <- centrality_RNM$node.centrality
+centrality_RNM_df <- gather(centrality_RNM_df, measure, value, Strength:ExpectedInfluence, factor_key=T)
+centrality_RNM_df$node <- c(1:22)
+centrality_RNM_df$model <- rep("RNM",22)
+
+#GGM centrality 
+centrality_GGM <- centrality_auto(GGM_net)
+centrality_GGM_df <- centrality_GGM$node.centrality
+centrality_GGM_df <- gather(centrality_GGM_df, measure, value, Strength:ExpectedInfluence, factor_key=T)
+centrality_GGM_df$node <- c(1:22)
+centrality_GGM_df$model <- rep("GGM",22)
+
+centrality_df <- rbind(centrality_RNM_df, centrality_GGM_df)
+
+layout(t(1:2))
+ggplot(centrality_df,  aes(value,node, color=model))+
+  geom_point()+
+  geom_path()+
+  facet_wrap(~measure, ncol=4)+
+  labs(title="Centrality comparison")+
+  scale_y_continuous(labels=as.character(centrality_df$node), breaks = centrality_df$node)
+
+#Degree distribution 
+GGM_deg <- rowSums(GGM_net !=0)
+GGM_deg_df <- data.frame("Node"=c(1:22), "Degree"=GGM_deg)
+
+ggplot(GGM_deg_df, aes(Degree))+
+  geom_histogram()
+
+RNM_deg <- rowSums(RNM_net_graph != 0)
+RNM_deg_df <- data.frame("Node"=c(1:22), "Degree"=RNM_deg)
+
+ggplot(RNM_deg_df, aes(Degree))+
+  geom_histogram()
+
+#Clustering coefficient 
+clustcoef_auto(RNM_net_graph)
+clustcoef_auto(GGM_net)
+
+layout(t(1:2))
+clusteringPlot(RNM_net_graph, signed=TRUE, include="WS")
+clusteringPlot(GGM_net, signed=TRUE, include="WS")
+
+```
+
