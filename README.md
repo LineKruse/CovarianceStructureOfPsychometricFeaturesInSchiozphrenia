@@ -1,4 +1,4 @@
-# MA-Thesis
+# Latent Variable- and Network models of psychometric features in schizophrenia 
 
 ## NBS analysis 
 Contains STRING PPI network and all functions used for NBS analysis. 
